@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Filtro de Posiciones",
+  "version": "1.0",
+  "description": "Filtra posiciones AS2",
+  "permissions": ["tabs"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "icons": {
+    "128": "lupa.png"
+  }
+}
+
