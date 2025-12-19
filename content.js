@@ -11,124 +11,115 @@ chrome.runtime.onMessage.addListener((request) => {
       .toLowerCase();
   }
 
-  // "AS2-2,3" → ["as2-2", "as2-3"]
-  function expandirPrefijos(input) {
-    const partes = input.split(',').map(p => p.trim()).filter(Boolean);
-    if (partes.length === 0) return [];
+ function expandirPrefijos(input) {
+  const partes = input
+    .split(',')
+    .map(p => p.trim())
+    .filter(Boolean);
 
-    if (partes.length === 1) {
-      return [partes[0].toLowerCase()];
-    }
+  if (partes.length === 0) return [];
 
-    const base = partes[0].replace(/\d+$/, '');
-
-    return partes.map(p => {
-      if (p === partes[0]) return p.toLowerCase();
-      return (base + p).toLowerCase();
-    });
+  // Caso simple: AS2-2
+  if (partes.length === 1) {
+    return [normalizar(partes[0])];
   }
 
-  // compara "AS2-2-1-4" vs "AS2-3-1-2"
+  // Base: AS2-
+  const match = partes[0].match(/^([a-z]+\d+-)/i);
+  if (!match) {
+    return partes.map(p => normalizar(p));
+  }
+
+  const base = match[1]; // AS2-
+
+  return partes.map(p => {
+    if (p.includes('-')) return normalizar(p);
+    return normalizar(base + p);
+  });
+}
+
+
   function compararPosiciones(a, b) {
-    const extraerNumeros = texto =>
-      texto
-        .split('-')
+    const extraer = t =>
+      t.split('-')
         .map(p => parseInt(p.replace(/\D/g, ''), 10))
         .filter(n => !isNaN(n));
 
-    const numsA = extraerNumeros(a);
-    const numsB = extraerNumeros(b);
+    const A = extraer(a);
+    const B = extraer(b);
 
-    const max = Math.max(numsA.length, numsB.length);
+    const max = Math.max(A.length, B.length);
 
     for (let i = 0; i < max; i++) {
-      const valA = numsA[i] ?? -1;
-      const valB = numsB[i] ?? -1;
-
-      if (valA !== valB) return valA - valB;
+      const va = A[i] ?? -1;
+      const vb = B[i] ?? -1;
+      if (va !== vb) return va - vb;
     }
     return 0;
   }
 
   /* =======================
-     ORDENAR FILAS
+     DETECTAR COLUMNA
   ======================= */
 
-  function ordenarFilasPorPosicion(encabezado) {
-    if (!encabezado || !encabezado.parentElement) return;
-
-    const contenedor = encabezado.parentElement;
-
-    const filas = [...contenedor.children].filter(div =>
-      div !== encabezado &&
-      div.children.length === 4 &&
-      div.style.display !== 'none'
-    );
-
-    filas.sort((a, b) => {
-      const posA = a.children[2]?.innerText.trim() || '';
-      const posB = b.children[2]?.innerText.trim() || '';
-      return compararPosiciones(posA, posB);
-    });
-
-    filas.forEach(fila => contenedor.appendChild(fila));
+  function obtenerIndiceCanalizacion() {
+    const ths = document.querySelectorAll('thead th');
+    for (let i = 0; i < ths.length; i++) {
+      if (normalizar(ths[i].textContent).includes('canalizacion')) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   /* =======================
-     FILTRAR
+     FILTRAR + ORDENAR
   ======================= */
 
-  function filtrarPorPosicion(inputPrefijo) {
-    const palabrasEncabezado = ['canalizacion', 'estatus', 'posicion', 'hora'];
-    let encabezado = null;
+  function filtrarPorPosicion(input) {
 
-    const prefijos = expandirPrefijos(inputPrefijo);
+    const tbody = document.querySelector('tbody');
+    if (!tbody) return;
 
-    // 1️⃣ Detectar encabezado y guardar estado original
-    document.querySelectorAll('div').forEach(div => {
+    const indice = obtenerIndiceCanalizacion();
+    if (indice === -1) return;
 
-      if (div.parentElement && !div.dataset.originalIndex) {
-        div.dataset.originalIndex =
-          [...div.parentElement.children].indexOf(div);
-      }
+    const prefijos = expandirPrefijos(input);
+    const filas = [...tbody.querySelectorAll('tr')];
 
-      if (!div.dataset.originalDisplay) {
-        div.dataset.originalDisplay = getComputedStyle(div).display;
-      }
-
-      const textosHijos = [...div.children].map(h =>
-        normalizar(h.textContent || '')
-      );
-
-      const esEncabezado = palabrasEncabezado.every(p =>
-        textosHijos.some(t => t.includes(p))
-      );
-
-      if (esEncabezado && div.children.length === 4) {
-        encabezado = div;
-      }
+    // Guardar estado original
+    filas.forEach((tr, i) => {
+      if (!tr.dataset.originalIndex) tr.dataset.originalIndex = i;
+      if (!tr.dataset.originalDisplay)
+        tr.dataset.originalDisplay = getComputedStyle(tr).display;
     });
 
-    // 2️⃣ Filtrar filas
-    document.querySelectorAll('div').forEach(div => {
-
-      if (div === encabezado) {
-        div.style.display = div.dataset.originalDisplay;
-        return;
-      }
-
-      if (div.children.length === 4) {
-        const texto = normalizar(div.textContent || '');
-        const coincide = prefijos.some(p => texto.includes(p));
-
-        div.style.display = coincide
-          ? div.dataset.originalDisplay
-          : 'none';
-      }
+    // Filtrar filas válidas
+    const visibles = filas.filter(tr => {
+      const texto = normalizar(tr.children[indice]?.textContent || '');
+      return prefijos.some(p => texto.startsWith(p));
     });
 
-    // 3️⃣ Ordenar visibles
-    ordenarFilasPorPosicion(encabezado);
+    // Ocultar todas
+    filas.forEach(tr => tr.style.display = 'none');
+
+    // Ordenar por prefijo + número
+    visibles.sort((a, b) => {
+      const aTxt = a.children[indice].textContent;
+      const bTxt = b.children[indice].textContent;
+
+      const pA = prefijos.findIndex(p => normalizar(aTxt).startsWith(p));
+      const pB = prefijos.findIndex(p => normalizar(bTxt).startsWith(p));
+
+      if (pA !== pB) return pA - pB;
+      return compararPosiciones(aTxt, bTxt);
+    });
+
+    // Mostrar en orden
+    visibles.forEach(tr => {
+      tr.style.display = tr.dataset.originalDisplay;
+      tbody.appendChild(tr);
+    });
   }
 
   /* =======================
@@ -137,34 +128,24 @@ chrome.runtime.onMessage.addListener((request) => {
 
   function restaurarFilas() {
 
-    // restaurar display
-    document.querySelectorAll('div').forEach(div => {
-      if (div.dataset.originalDisplay) {
-        div.style.display = div.dataset.originalDisplay;
-      } else {
-        div.style.display = '';
-      }
-    });
+    const tbody = document.querySelector('tbody');
+    if (!tbody) return;
 
-    // restaurar orden original
-    document.querySelectorAll('div[data-original-index]')
-      .forEach(div => {
-        const parent = div.parentElement;
-        if (!parent) return;
+    const filas = [...tbody.querySelectorAll('tr')];
 
-        const hijos = [...parent.children]
-          .filter(c => c.dataset.originalIndex !== undefined)
-          .sort((a, b) =>
-            Number(a.dataset.originalIndex) -
-            Number(b.dataset.originalIndex)
-          );
-
-        hijos.forEach(h => parent.appendChild(h));
+    filas
+      .sort((a, b) =>
+        Number(a.dataset.originalIndex) -
+        Number(b.dataset.originalIndex)
+      )
+      .forEach(tr => {
+        tr.style.display = tr.dataset.originalDisplay || '';
+        tbody.appendChild(tr);
       });
   }
 
   /* =======================
-     MENSAJES POPUP
+     MENSAJES
   ======================= */
 
   if (request.action === 'filtrar') {
@@ -175,4 +156,3 @@ chrome.runtime.onMessage.addListener((request) => {
     restaurarFilas();
   }
 });
-
